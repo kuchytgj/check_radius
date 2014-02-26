@@ -139,7 +139,7 @@ foreach my $hostname (split(/,/, $host)) {
 	$status = $ERRORS{'WARNING'} if ( $elapsed >= $w );
 	$status = $ERRORS{'CRITICAL'} if ( $elapsed >= $c or $? !=0 );
 
-	push(@summary, "$hostname: $ERRORSREV{$status}");
+	push(@summary, "$hostname ($elapsed sec): $ERRORSREV{$status}");
 
 	print "DEBUG ($hostname): Elapsed time: $elapsed seconds\n" if $debug;
 	print "DEBUG ($hostname): radclient exit status: $?\n" if $debug;
@@ -149,7 +149,7 @@ foreach my $hostname (split(/,/, $host)) {
 #$status = $ERRORS{'OK'} if ( $elapsed < $w );
 
 
-print $ERRORSREV{$status} . ": ";
+print $ERRORSREV{$status} . ": (w:$w;c:$c;t:$t) ";
 print join('; ', @summary),"\n";
 #print "Radius response time $elapsed seconds";
 #print " | ";

@@ -12,14 +12,15 @@ my $debug =	0;
 my $w =		3;
 my $c =		5;
 my $t =		10;
-my $exec =	"/etc/init.d/radiusd restart";
 my $filename;
 my $secret;
+my $secretfile;
 my $status;
 
 my $radclient =	"/usr/local/bin/radclient";
 
 my %ERRORS =	('OK'=>0,'WARNING'=>1,'CRITICAL'=>2,'UNKNOWN'=>3,'DEPENDENT'=>4);
+my %ERRORSREV = reverse(%ERRORS);
 
 
 
@@ -29,26 +30,30 @@ sub usage() {
 print <<DATA;
 
 	Version: $version
-	$basename [-h] [-d] [-H hostname] [-P port] [-w warning] [-c critical] [-t timeout] [-e exec] -s secret
+	$basename [-h] [-d] [-H hostname] [-P port] [-w warning] [-c critical] [-t timeout] -s secret
 
 	-h|--help	This help screen
 	-d|--debug	Activate debug mode
-	-H|--hostname	Hostname to send query [Default: $host]
+	-H|--hostname	Hostname to send query, can also be comma-delimited list of hosts to check [Default: $host]
 	-P|--port	Port where status server is listening [Default: $port]
 	-w|--warning	Warning threshold in seconds [Default: $w]
 	-c|--critical	Critical threshold in seconds [Default: $c]
-	-e|--exec	Program to execute if radius doesn't respond within the timeout [Default: $exec]
 	-t|--timeout	Timeout [Default: $t]
 	-s|--secret	Secret
+	-S|--secretfile	File storing the secret
+	-b|--radclient 	Path to the radclient binary [Default: $radclient]
+
+	If a comma-separated list is given to -H each host will be checked and the status will
+	reflect the following set of conditions:
+	OK - All hosts in the list responed within the threshold
+	WARNING - At least one host in the list responded within the WARNING threshold
+	CRITICAL - At least one host in the list responded within the CRITICAL threshold
 
 	Plugin to check radius status. It use the radclient program from FreeRADIUS project
 	(http://www.freeradius.org) and use the Status-Server packet to perform tests. See
 	http://wiki.freeradius.org/Status on how to configure it.
 
 	The plugin output performance data about elapsed time executing the query.
-
-	The plugin can execute an external program if the radius server doesn't respond within
-	the timeout (e.g. for restarting the server).
 
 DATA
 
@@ -68,8 +73,9 @@ sub check_options () {
 		'w|warning:i'	=> \$w,
 		'c|critical:i'	=> \$c,
 		't|timeout:s'	=> \$t,
-		'e|exec:s'	=> \$exec,
 		's|secret:s'	=> \$secret,
+		'S|secretfile:s' => \$secretfile,
+		'b|radclient:s' => \$radclient,
 	
 	);
 
@@ -91,8 +97,16 @@ sub check_options () {
 		print "\nPlease insert an integer value greater than $c\n";
 		usage();
 	}
-	if ( !defined($secret) ) {
-		print "\nPlease supply the secret for $host\n";
+	if ( !defined($secret) and !defined($secretfile) ) {
+		print "\nPlease supply the secret/secret file for $host\n";
+		usage();
+	}
+	if ( defined($secretfile) and ! -f $secretfile ) {
+		print "Please supply a valid file as the secret file\n";
+		usage();
+	}
+	if ( defined($radclient) and ! -e $radclient) {
+		print "Please supply a valid executable binary for radclient\n";
 		usage();
 	}
 }
@@ -102,29 +116,44 @@ sub check_options () {
 #
 check_options();
 
-my $cmd = "echo \"Message-Authenticator = 0x00\" | $radclient -q -c 1 -r 1 -t $t $host:$port status $secret 2>/dev/null";
-print "DEBUG: radclient command: $cmd\n" if $debug;
+# Assume everyone responded in time
+$status = $ERRORS{'OK'};
+my @summary;
 
-my $t0 = [gettimeofday];
-system($cmd);
-my $elapsed = tv_interval($t0);
+foreach my $hostname (split(/,/, $host)) {
+	# this is a little messy, maybe to clean this up in the future?
+	my $cmd = "echo \"Message-Authenticator = 0x00\" | $radclient -q -c 1 -r 1 -t $t ";
+	if (defined($secretfile)) {
+		$secret = "-S $secretfile";
+		$cmd .= "$secret $hostname:$port status 2>/dev/null";
+	} else {
+		$cmd .= "$hostname:$port status $secret 2>/dev/null";
+	}
+	$cmd .= " -x" if $debug;
 
-$status = $ERRORS{'OK'} if ( $elapsed < $w );
-$status = $ERRORS{'WARNING'} if ( $elapsed >= $w );
-$status = $ERRORS{'CRITICAL'} if ( $elapsed >= $c or $? !=0 );
+	print "DEBUG: radclient command: $cmd\n" if $debug;
 
-print "DEBUG: Elapsed time: $elapsed seconds\n" if $debug;
-print "DEBUG: radclient exit status: $?\n" if $debug;
-print "DEBUG: plugin exit status: $status\n" if $debug;
+	my $t0 = [gettimeofday];
+	system($cmd);
+	my $elapsed = tv_interval($t0);
+	$status = $ERRORS{'WARNING'} if ( $elapsed >= $w );
+	$status = $ERRORS{'CRITICAL'} if ( $elapsed >= $c or $? !=0 );
 
-print "Radius response time $elapsed seconds";
-print " | ";
-print "'Response Time'=$elapsed;$w;$c;0;$t\n";
+	push(@summary, "$hostname: $ERRORSREV{$status}");
 
-if ( $? != 0 and defined($exec)) {
-	print "DEBUG: radclient timeout: executing \"$exec\"\n";
-	system("$exec 1>/dev/null 2>/dev/null");
+	print "DEBUG ($hostname): Elapsed time: $elapsed seconds\n" if $debug;
+	print "DEBUG ($hostname): radclient exit status: $?\n" if $debug;
+	print "DEBUG ($hostname): plugin exit status: $status\n" if $debug;
 }
+
+#$status = $ERRORS{'OK'} if ( $elapsed < $w );
+
+
+print $ERRORSREV{$status} . ": ";
+print join('; ', @summary),"\n";
+#print "Radius response time $elapsed seconds";
+#print " | ";
+#print "'Response Time'=$elapsed;$w;$c;0;$t\n";
 
 exit $status;
 

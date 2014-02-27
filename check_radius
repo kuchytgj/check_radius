@@ -5,7 +5,7 @@ use Getopt::Long;
 use File::Basename;
 use Time::HiRes qw(gettimeofday tv_interval);;
 
-my $version =	"20100116";
+my $version =	"20140227";
 my $host =	"localhost";
 my $port =	18120;
 my $debug =	0;
@@ -105,7 +105,7 @@ sub check_options () {
 		print "Please supply a valid file as the secret file\n";
 		usage();
 	}
-	if ( defined($radclient) and ! -e $radclient) {
+	if ( defined($radclient) and ! -x $radclient) {
 		print "Please supply a valid executable binary for radclient\n";
 		usage();
 	}

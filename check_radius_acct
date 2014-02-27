@@ -1,0 +1,165 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use File::Basename;
+
+my $version = "20140227";
+
+my $host = "localhost";
+my $port = "1813";
+my $debug;
+my $dryrun;
+my $help;
+my $radclient = "/usr/bin/radclient";
+my $secret;
+my $secretfile;
+my $verbose;
+
+my $testuser = 'alice';
+
+my $starttext = <<EOF;
+Packet-Type=4
+Packet-Dst-Port=1813
+Acct-Session-Id = "4D2BB8AC-00000098"
+Acct-Status-Type = Start
+Acct-Authentic = RADIUS
+User-Name = "$testuser"
+NAS-Port = 0
+Called-Station-Id = "00-02-6F-AA-AA-AA:My Wireless"
+Calling-Station-Id = "00-1C-B3-AA-AA-AA"
+NAS-Port-Type = Wireless-802.11
+Connect-Info = "CONNECT 48Mbps 802.11b"
+EOF
+
+my $updatetext = <<EOF;
+Packet-Type=4
+Packet-Dst-Port=1813
+Acct-Session-Id = "4D2BB8AC-00000098"
+Acct-Status-Type = Interim-Update
+Acct-Authentic = RADIUS
+User-Name = "$testuser"
+NAS-Port = 0
+Called-Station-Id = "00-02-6F-AA-AA-AA:My Wireless"
+Calling-Station-Id = "00-1C-B3-AA-AA-AA"
+NAS-Port-Type = Wireless-802.11
+Connect-Info = "CONNECT 48Mbps 802.11b"
+Acct-Session-Time = 11
+Acct-Input-Packets = 15
+Acct-Output-Packets = 3
+Acct-Input-Octets = 1407
+Acct-Output-Octets = 467
+EOF
+
+my $stoptext = <<EOF;
+Packet-Type=4
+Packet-Dst-Port=1813
+Acct-Session-Id = "4D2BB8AC-00000098"
+Acct-Status-Type = Stop
+Acct-Authentic = RADIUS
+User-Name = "$testuser"
+NAS-Port = 0
+Called-Station-Id = "00-02-6F-AA-AA-AA:My Wireless"
+Calling-Station-Id = "00-1C-B3-AA-AA-AA"
+NAS-Port-Type = Wireless-802.11
+Connect-Info = "CONNECT 48Mbps 802.11b"
+Acct-Session-Time = 30
+Acct-Input-Packets = 25
+Acct-Output-Packets = 7
+Acct-Input-Octets = 3407
+Acct-Output-Octets = 867
+Acct-Terminate-Cause = User-Request
+EOF
+
+my %STATES = (
+	OK => 0,
+	WARNING => 1,
+	CRITICAL => 2,
+	UNKNOWN => 3,
+	DEPENDENT => 4,
+);
+
+my %STATESREV = reverse(%STATES);
+
+sub print_usage() {
+my $prog_name = basename($0);
+print <<EOF;
+usage: $prog_name --secret|--secretfile [--host host] [--port port] [--radclient /path/to/radclient] [--debug] [--dryrun] [--help] [--verbose]
+
+Options:
+	debug		Print debugging information
+	dryrun		Do not actually perform Accounting requests
+	help		Display this screen and exit
+	host		The hostname/ip of the radius server to test
+	port		The udp port to connect to on the host [Default: 1813]
+	radclient	The path to the radclient binary
+	secret		The corresponding secret to the specified host
+	secretfile	The path to a file containing the host's secret
+	verbose		Print more detailed information
+EOF
+	exit $STATES{'UNKNOWN'};
+}
+sub check_options () {
+	GetOptions(
+		"debug" => \$debug,
+		"dryrun" => \$dryrun,
+		"help" => \$help,
+		"port" => \$port,
+		"host=s" => \$host,
+		"radclient=s" => \$radclient,
+		"secret=s" => \$secret,
+		"secretfile=s" => \$secretfile,
+		"verbose" => \$verbose,
+	);
+
+	unless (defined($secret) or (defined($secretfile) and -f $secretfile)) {
+		print "Please provide a valid secret or secret file\n";
+		print_usage();
+	}
+
+	unless (-x $radclient) {
+		print "--radclient: Please provide a valid runnable binary/script";
+		print_usage();
+	}
+}
+
+# Main
+check_options();
+
+my $cmdlinestub = "$radclient";
+$cmdlinestub .= " -q" unless ($debug and $verbose);
+$cmdlinestub .= " $host auto";
+
+if (defined($secret) and !defined($secretfile)) {
+	$cmdlinestub .= " $secret ";
+} elsif (defined($secretfile) and !defined($secret)) {
+	$cmdlinestub .= " -S $secretfile ";
+} else {
+	print_usage();
+}
+
+my $startcmdline = "echo '$starttext' | $cmdlinestub";
+my $stopcmdline = "echo '$stoptext' | $cmdlinestub";
+
+print "Executing \"$startcmdline\" " if $debug;
+my $ret = system($startcmdline) unless $dryrun;
+$ret = $ret >> 8;
+print "returned $ret\n\n" if $debug;
+
+unless (0 == $ret) {
+	print "'Acct-Status-Type = Start' returned $ret\n";
+	exit $STATES{'CRITICAL'};
+}
+
+print "Executing \"$stopcmdline\" " if $debug;
+$ret = system($stopcmdline) unless $dryrun;
+$ret = $ret >> 8;
+print "returned $ret\n" if $debug;
+
+unless (0 == $ret ) {
+	print "'Acct-Status-Type = Stop' returned $ret\n";
+	exit $STATES{'CRITICAL'};
+}
+
+print "Accouting $STATESREV{$ret}\n";
+exit $STATES{'OK'};

@@ -1,0 +1,6 @@
+check_radius
+
+Scripts intended to be used as Nagios nrpe checks to monitor freeradius server status and accounting functionality.
+
+Greg Kuchyt
+greg<dot>kuchyt<at>gmail<dot>com
